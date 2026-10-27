@@ -209,39 +209,32 @@ export async function importDecklist(deckId: string, text: string, mode: "add" |
   });
   const byOracle = new Map(current.map((dc) => [dc.card.oracleId, dc]));
 
-  let added = 0;
-  let updated = 0;
-  const ops = [];
+  const creates: { deckId: string; cardId: string; quantity: number; isCommander: boolean }[] = [];
+  const updates: { id: string; quantity: number; isCommander: boolean; ownedQty: number }[] = [];
   for (const [oracleId, w] of wanted) {
     const dc = byOracle.get(oracleId);
     if (!dc) {
-      added++;
-      ops.push(
-        db.deckCard.create({
-          data: { deckId, cardId: w.card.id, quantity: w.quantity, isCommander: w.isCommander },
-        }),
-      );
+      creates.push({ deckId, cardId: w.card.id, quantity: w.quantity, isCommander: w.isCommander });
       continue;
     }
     const quantity = mode === "replace" ? w.quantity : Math.max(dc.quantity, w.quantity);
     const isCommander = mode === "replace" ? w.isCommander : dc.isCommander || w.isCommander;
     if (quantity !== dc.quantity || isCommander !== dc.isCommander) {
-      updated++;
-      ops.push(
-        db.deckCard.update({
-          where: { id: dc.id },
-          data: { quantity, isCommander, ownedQty: Math.min(dc.ownedQty, quantity) },
-        }),
-      );
+      updates.push({ id: dc.id, quantity, isCommander, ownedQty: Math.min(dc.ownedQty, quantity) });
     }
   }
-
   const toRemove = mode === "replace" ? current.filter((dc) => !wanted.has(dc.card.oracleId)) : [];
-  if (toRemove.length) {
-    ops.push(db.deckCard.deleteMany({ where: { id: { in: toRemove.map((dc) => dc.id) } } }));
+
+  // A few statements instead of one per card: a hosted database is too far away
+  // for 100 sequential writes inside one transaction (5 s limit).
+  if (toRemove.length) await db.deckCard.deleteMany({ where: { id: { in: toRemove.map((dc) => dc.id) } } });
+  if (creates.length) await db.deckCard.createMany({ data: creates, skipDuplicates: true });
+  for (let i = 0; i < updates.length; i += 10) {
+    await Promise.all(updates.slice(i, i + 10).map(({ id, ...data }) => db.deckCard.update({ where: { id }, data })));
   }
-  ops.push(touch(deckId));
-  await db.$transaction(ops);
+  await touch(deckId);
+  const added = creates.length;
+  const updated = updates.length;
 
   return {
     added,

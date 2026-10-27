@@ -34,10 +34,26 @@ function toRow(c: ScryfallCard) {
   };
 }
 
+/**
+ * Insert or refresh cards. New cards go in with one statement and known ones
+ * are refreshed a few at a time; one row at a time inside a transaction is too
+ * slow against a hosted database (it hit the 5 s transaction limit).
+ */
 export async function saveCards(cards: ScryfallCard[]): Promise<Card[]> {
-  const rows = cards.map(toRow);
-  await db.$transaction(rows.map((row) => db.card.upsert({ where: { id: row.id }, create: row, update: row })));
-  return db.card.findMany({ where: { id: { in: rows.map((r) => r.id) } } });
+  const rows = [...new Map(cards.map((c) => [c.id, toRow(c)])).values()];
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const known = new Set(
+    (await db.card.findMany({ where: { id: { in: ids } }, select: { id: true } })).map((c) => c.id),
+  );
+
+  const fresh = rows.filter((r) => !known.has(r.id));
+  if (fresh.length) await db.card.createMany({ data: fresh, skipDuplicates: true });
+  const stale = rows.filter((r) => known.has(r.id));
+  for (let i = 0; i < stale.length; i += 10) {
+    await Promise.all(stale.slice(i, i + 10).map((r) => db.card.update({ where: { id: r.id }, data: r })));
+  }
+  return db.card.findMany({ where: { id: { in: ids } } });
 }
 
 function requestKey(r: CardRequest) {
@@ -49,24 +65,39 @@ function matchesName(card: Card, name: string) {
   return card.nameKey === key || card.frontKey === key || card.frontKey === normalizeName(frontFace(name));
 }
 
-async function findCached(r: CardRequest): Promise<Card | null> {
+/** Every cached card any of these requests could match, in one query (oldest first). */
+async function loadCached(requests: CardRequest[]): Promise<Card[]> {
+  const keys = new Set<string>();
+  const printings: { setCode: string; collectorNumber: string }[] = [];
+  for (const r of requests) {
+    keys.add(normalizeName(r.name));
+    keys.add(normalizeName(frontFace(r.name)));
+    if (r.setCode && r.collectorNumber) {
+      printings.push({ setCode: r.setCode.toLowerCase(), collectorNumber: r.collectorNumber });
+    }
+  }
+  if (!keys.size) return [];
+  return db.card.findMany({
+    where: { OR: [{ nameKey: { in: [...keys] } }, { frontKey: { in: [...keys] } }, ...printings] },
+    orderBy: { fetchedAt: "asc" }, // the first printing we cached for a name wins
+  });
+}
+
+/** The cached card for a request, picked from `cached` (see loadCached). */
+function findCached(r: CardRequest, cached: Card[]): Card | null {
   const set = r.setCode?.toLowerCase();
   if (set && r.collectorNumber) {
-    const exact = await db.card.findFirst({
-      where: { setCode: set, collectorNumber: r.collectorNumber },
-    });
+    const exact = cached.find((c) => c.setCode === set && c.collectorNumber === r.collectorNumber);
     if (exact && matchesName(exact, r.name)) return exact;
     if (exact) return null; // set/number points at a different card; ask Scryfall by name
   }
   const key = normalizeName(r.name);
   const frontKey = normalizeName(frontFace(r.name));
-  return db.card.findFirst({
-    where: {
-      OR: [{ nameKey: key }, { frontKey: key }, { frontKey }],
-      ...(set ? { setCode: set } : {}),
-    },
-    orderBy: { fetchedAt: "asc" }, // the first printing we cached for this name
-  });
+  return (
+    cached.find(
+      (c) => (c.nameKey === key || c.frontKey === key || c.frontKey === frontKey) && (!set || c.setCode === set),
+    ) ?? null
+  );
 }
 
 function identifierFor(r: CardRequest, round: number): CardIdentifier {
@@ -98,10 +129,11 @@ export async function resolveCards(requests: CardRequest[]) {
   const resolved = new Map<string, Card>();
   let pending: CardRequest[] = [];
 
+  const cachedCards = await loadCached(requests);
   for (const r of requests) {
     const k = requestKey(r);
     if (resolved.has(k)) continue;
-    const cached = await findCached(r);
+    const cached = findCached(r, cachedCards);
     if (cached) resolved.set(k, cached);
     else pending.push(r);
   }

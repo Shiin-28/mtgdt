@@ -130,9 +130,9 @@ export async function removeDeckCard(deckCardId: string): Promise<ActionResult> 
 
 export async function setAllOwned(deckId: string, owned: boolean): Promise<ActionResult> {
   if (!(await ownDeck(deckId))) return NOT_FOUND;
-  const cards = await db.deckCard.findMany({ where: { deckId } });
-  await db.$transaction(
-    cards.map((c) => db.deckCard.update({ where: { id: c.id }, data: { ownedQty: owned ? c.quantity : 0 } })),
-  );
+  // One statement for the whole deck (ownedQty = quantity, or 0).
+  if (owned) await db.$executeRaw`UPDATE "DeckCard" SET "ownedQty" = "quantity" WHERE "deckId" = ${deckId}`;
+  else await db.deckCard.updateMany({ where: { deckId }, data: { ownedQty: 0 } });
+  await db.deck.update({ where: { id: deckId }, data: { updatedAt: new Date() } });
   return deckOrError(deckId);
 }
