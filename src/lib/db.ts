@@ -1,12 +1,12 @@
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 function createClient() {
-  const adapter = new PrismaBetterSqlite3({
-    url: process.env.DATABASE_URL ?? "file:./prisma/dev.db",
-  });
+  // Supabase Postgres through its transaction pooler (DATABASE_URL, port 6543).
+  // A small pool per server instance; the pooler shares connections between them.
+  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL, max: 5 });
   return new PrismaClient({ adapter });
 }
 

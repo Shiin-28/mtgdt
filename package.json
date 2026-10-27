@@ -13,7 +13,7 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@prisma/adapter-better-sqlite3": "^7.10.1",
+    "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.118.0",
@@ -25,7 +25,6 @@
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.19.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -40,7 +39,6 @@
   },
   "allowScripts": {
     "@prisma/engines@7.10.1": true,
-    "better-sqlite3@12.11.1": true,
     "esbuild@0.28.2": true,
     "prisma@7.10.1": true,
     "unrs-resolver@1.12.2": true

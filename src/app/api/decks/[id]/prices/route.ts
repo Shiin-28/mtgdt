@@ -5,6 +5,10 @@ import type { PriceEvent } from "@/lib/prices/types";
 import { STORES, storeInfo } from "@/lib/stores";
 import { accessOrNull, ownedBy } from "@/lib/auth";
 
+// Price checks stream for minutes on big decks. Hosts like Vercel stop a request
+// at their limit; finished lookups are cached, so "Resume checking" carries on.
+export const maxDuration = 300;
+
 async function deckExists(deckId: string, ownerId: string | null) {
   return (await db.deck.count({ where: { id: deckId, ...ownedBy(ownerId) } })) > 0;
 }

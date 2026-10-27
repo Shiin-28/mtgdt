@@ -53,15 +53,23 @@ async function buildIndex() {
       if (parsed) entries.push({ url, ...parsed });
     }
   }
-  await db.$transaction([
-    db.storeIndexEntry.deleteMany({ where: { store: ID } }),
-    db.storeIndexEntry.createMany({ data: entries.map((e) => ({ ...e, store: ID })) }),
-    db.storeIndexState.upsert({
-      where: { store: ID },
-      create: { store: ID, builtAt: new Date(), entries: entries.length },
-      update: { builtAt: new Date(), entries: entries.length },
-    }),
-  ]);
+  // Postgres caps parameters per statement, so insert in chunks inside one transaction.
+  const CHUNK = 5000;
+  const rows = entries.map((e) => ({ ...e, store: ID }));
+  await db.$transaction(
+    async (tx) => {
+      await tx.storeIndexEntry.deleteMany({ where: { store: ID } });
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        await tx.storeIndexEntry.createMany({ data: rows.slice(i, i + CHUNK), skipDuplicates: true });
+      }
+      await tx.storeIndexState.upsert({
+        where: { store: ID },
+        create: { store: ID, builtAt: new Date(), entries: entries.length },
+        update: { builtAt: new Date(), entries: entries.length },
+      });
+    },
+    { timeout: 120_000 },
+  );
 }
 
 /** Start (or join) a background index rebuild. */

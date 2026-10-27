@@ -70,18 +70,19 @@ git clone https://github.com/Shiin-28/mtgdt.git
 cd mtgdt
 npm install                 # also generates the Prisma client
 cp .env.example .env        # then edit .env (see below)
-npx prisma migrate dev      # creates the local SQLite database
+npx prisma migrate deploy   # creates the tables in your Supabase database
 npm run dev                 # http://localhost:3000
 ```
 
-npm may ask you to approve install scripts for Prisma, better-sqlite3 and
-esbuild; they're listed under `allowScripts` in `package.json`.
+npm may ask you to approve install scripts for Prisma and esbuild; they're
+listed under `allowScripts` in `package.json`.
 
 ### Environment variables
 
 | Variable | Needed | What it is |
 |---|---|---|
-| `DATABASE_URL` | Yes | SQLite file, e.g. `file:./prisma/dev.db` |
+| `DATABASE_URL` | Yes | Supabase Postgres, transaction pooler (port 6543, `?pgbouncer=true`): **Connect → ORMs → Prisma** |
+| `DIRECT_URL` | Yes | Supabase Postgres, session pooler (port 5432), used for migrations |
 | `NEXT_PUBLIC_SUPABASE_URL` | For accounts | Your Supabase Project URL, e.g. `https://abcd.supabase.co` (no `/rest/v1` at the end) |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | For accounts | Supabase publishable key (`sb_publishable_…`) or legacy anon key |
 | `NEXT_PUBLIC_SITE_URL` | Optional | Public address of the site, used in confirmation and reset emails |
@@ -99,8 +100,8 @@ Never put the Supabase **secret** / `service_role` key in this app.
    `http://localhost:3000/auth/callback` to Redirect URLs.
 5. Restart `npm run dev` (delete `.next` first if old settings stick).
 
-No database tables are needed in Supabase; it only handles logins. Decks made
-before accounts were switched on are claimed by the first account that logs in.
+Decks made before accounts were switched on are claimed by the first account
+that logs in.
 Supabase's built-in email sends only a few messages per hour; for real users,
 configure your own SMTP under **Authentication → Emails**.
 
@@ -117,7 +118,7 @@ configure your own SMTP under **Authentication → Emails**.
 ## Tech stack
 
 Next.js 16 (App Router, Cache Components) · React 19 · TypeScript · Tailwind CSS 4 ·
-Prisma 7 with SQLite · Supabase Auth · Scryfall API · Vitest
+Prisma 7 with Supabase Postgres · Supabase Auth · Scryfall API · Vitest
 
 ## Project layout
 
@@ -140,8 +141,9 @@ STORES.md               research notes on each store
 
 ## Known limitations
 
-- **Data is stored in a local SQLite file.** Deploying to a serverless host such as
-  Vercel needs a hosted database (e.g. Supabase Postgres) first.
+- **On Vercel**, one price-check request can run for up to 5 minutes; bigger checks
+  stop there and "Resume checking" continues. The per-store rate limit is kept per
+  server instance, not shared between instances.
 - A full price check of a 100-card deck can take several minutes, because each
   store gets one request every 1.5 seconds. Results are cached for 12 hours.
 - Block 101 is searched through its sitemap, so only the first few printings of a
