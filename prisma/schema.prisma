@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// Local cache of Scryfall card objects. One row per printing (Scryfall ID).
+model Card {
+  id              String   @id // Scryfall ID
+  oracleId        String
+  name            String // full name, e.g. "Delver of Secrets // Insectile Aberration"
+  frontName       String // first face name, e.g. "Delver of Secrets"
+  nameKey         String // normalizeName(name)
+  frontKey        String // normalizeName(frontName)
+  setCode         String
+  setName         String
+  collectorNumber String
+  imageUrl        String?
+  typeLine        String
+  manaCost        String?
+  cmc             Float    @default(0)
+  colorIdentity   String // e.g. "UR", "" for colorless
+  layout          String
+  /// Scryfall keywords as a JSON array; null for cards cached before this was stored (filled in on demand).
+  keywords        String?
+  /// From "Partner with X" in the rules text.
+  partnerWith     String?
+  /// From "Partner—X" in the rules text, e.g. "Friends forever".
+  partnerGroup    String?
+  fetchedAt       DateTime @default(now())
+
+  deckCards DeckCard[]
+
+  @@index([nameKey])
+  @@index([frontKey])
+  @@index([oracleId])
+  @@index([setCode, collectorNumber])
+}
+
+model Deck {
+  id        String   @id @default(cuid())
+  name      String
+  format    String   @default("commander") // see src/lib/formats.ts
+  /// Supabase auth user id. Null for decks made before accounts (claimed on first sign-in) and in local mode.
+  userId    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cards DeckCard[]
+
+  @@index([userId])
+}
+
+model DeckCard {
+  id          String  @id @default(cuid())
+  deckId      String
+  cardId      String
+  quantity    Int     @default(1) // copies the deck needs
+  ownedQty    Int     @default(0) // copies the user already has
+  proxy       Boolean @default(false) // copies not owned will be proxied, not bought
+  isCommander Boolean @default(false)
+
+  deck Deck @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  card Card @relation(fields: [cardId], references: [id])
+
+  @@unique([deckId, cardId])
+}
+
+// One product listing seen on a store, for a searched card name.
+model StoreListing {
+  id              String   @id @default(cuid())
+  store           String // StoreAdapter id
+  cardKey         String // normalizeName of the card we searched for
+  cardName        String // name as shown by the store
+  setCode         String?
+  collectorNumber String?
+  condition       String // NM | LP | MP | HP | DMG | UNKNOWN
+  foil            Boolean
+  pricePhp        Float? // null when the store only shows its price in the browser
+  quantity        Int?
+  inStock         Boolean
+  url             String
+  fetchedAt       DateTime
+
+  @@index([store, cardKey])
+  @@index([cardKey])
+}
+
+// When a store was last searched for a card, so empty results are cached too.
+model StoreFetch {
+  store     String
+  cardKey   String
+  status    String // ok | error | unsupported
+  error     String?
+  fetchedAt DateTime
+
+  @@id([store, cardKey])
+}
+
+// Product URLs read from a store's published sitemap, for stores whose search
+// pages are off-limits to bots. Rebuilt about once a day.
+model StoreIndexEntry {
+  url             String  @id
+  store           String
+  nameKey         String // normalized name from the URL slug, variant words included
+  setCode         String?
+  collectorNumber String?
+  foil            Boolean
+
+  @@index([store, nameKey])
+}
+
+model StoreIndexState {
+  store   String   @id
+  builtAt DateTime
+  entries Int
+}
